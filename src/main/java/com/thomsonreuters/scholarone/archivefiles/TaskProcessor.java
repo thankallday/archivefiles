@@ -1,6 +1,9 @@
 package com.thomsonreuters.scholarone.archivefiles;
 
-import java.io.IOException;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.PrintStream;
+import java.text.DecimalFormat;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -9,10 +12,10 @@ import java.util.concurrent.TimeUnit;
 import com.scholarone.activitytracker.IHeader;
 import com.scholarone.activitytracker.ILog;
 import com.scholarone.activitytracker.IMonitor;
-import com.scholarone.activitytracker.TrackingInfo;
 import com.scholarone.activitytracker.ref.LogTrackerImpl;
 import com.scholarone.activitytracker.ref.LogType;
 import com.scholarone.activitytracker.ref.MonitorTrackerImpl;
+import com.scholarone.archivefiles.common.S3FileUtil;
 
 public class TaskProcessor extends Thread
 {
@@ -54,6 +57,7 @@ public class TaskProcessor extends Thread
 
   public void run()
   {    
+    System.out.println("STARTED " + Thread.currentThread().getName());
     if (factory == null)
     {
       logger.log(LogType.ERROR, "ITaskFactory was not supplied.");
@@ -65,31 +69,49 @@ public class TaskProcessor extends Thread
       logger.log(LogType.ERROR, "StackId was not supplied");
       return;
     }
-
-    String environment = "dev";
+    
+    logger.log(LogType.INFO, "begin archiving job ==============================");
+    
+    File lockFileDir = new File("lock");
+    String lockFilePath = "lock" + File.separator + ".lock-stack" + stackId;
+    File lockFile = new File(lockFilePath);
     try
     {
-      environment = ConfigPropertyValues.getProperty("environment");
+      if (!lockFileDir.exists())
+      {
+        lockFileDir.mkdirs();
+        logger.log(LogType.INFO, lockFileDir.getAbsolutePath() + " created");
+      }
+      
+      if (lockFile.exists())
+      {
+        logger.log(LogType.INFO, "aborted archiving job becasue previous job is still running. " + lockFile.getAbsolutePath() + " exists. ===================");
+        return;
+      }
+      else
+      {
+        FileOutputStream out = new FileOutputStream(lockFilePath);
+        PrintStream p = new PrintStream(out);
+        p.close();
+      }
     }
-    catch (NumberFormatException | IOException e)
+    catch (Exception e)
     {
-      logger.log(LogType.WARN, "Failed to read environment. Using default. - " + e.getMessage());
+      logger.log(LogType.ERROR, "abort archiving job because of error when checking/creating lock file.");
+      logger.log(LogType.ERROR, e.getMessage());
+      return;
     }
+    logger.log(LogType.INFO, "lock file " + lockFile.getName() + " created.");
+    
+    String environment = "dev";
+    environment = ConfigPropertyValues.getProperty("environment");
     
     Integer poolSize = Integer.valueOf(5);
-
-    try
-    {
-      poolSize = Integer.valueOf(ConfigPropertyValues.getProperty("threadpool.size." + stackId));
-    }
-    catch (NumberFormatException | IOException e)
-    {
-      logger.log(LogType.WARN, "Failed to read threadpool.size. " + stackId + ".  Using default. - " + e.getMessage());
-    }
-   
+    poolSize = Integer.valueOf(ConfigPropertyValues.getProperty("threadpool.size." + stackId));
+    
     if (tasks == null) tasks = factory.getTasks();
-   
-    TrackingInfo stat = new TrackingInfo();
+
+    StatInfo stat = new StatInfo();
     stat.setType(MonitorConstants.FILE_ARCHIVE_RUN);
     stat.setEnvironment("s1m-" + environment + "-stack" + stackId);
     stat.setStackId(stackId);
@@ -111,15 +133,8 @@ public class TaskProcessor extends Thread
 
       while (pool.getActiveCount() > 0)
       {
-        try
-        {
-          String stopValue = ConfigPropertyValues.getProperty("stop." + stackId);
-          if (stopValue != null) setStop(true);
-        }
-        catch (NumberFormatException | IOException e)
-        {
-          logger.log(LogType.WARN, "Fail to read stop. " + stackId + ".  Using default - " + e.getMessage());
-        }
+        String stopValue = ConfigPropertyValues.getProperty("stop." + stackId);
+        if (stopValue != null) setStop(true);
 
         if (isStop())
         {
@@ -132,14 +147,7 @@ public class TaskProcessor extends Thread
 
         completedCount = pool.getCompletedTaskCount();
 
-        try
-        {
-          poolSize = Integer.valueOf(ConfigPropertyValues.getProperty("threadpool.size." + stackId));
-        }
-        catch (NumberFormatException | IOException e)
-        {
-          logger.log(LogType.WARN, "Fail to read property - threadpool.size." + stackId + " - " + e.getMessage());
-        }
+        poolSize = Integer.valueOf(ConfigPropertyValues.getProperty("threadpool.size." + stackId));
 
         if (pool.getCorePoolSize() != poolSize.intValue())
         {
@@ -176,6 +184,7 @@ public class TaskProcessor extends Thread
       stat.setTransferSize(transferSize);
       stat.setTransferTime(transferTime);
       stat.setTransferRate(totalTransferRate/tasks.size());
+    
     }
     catch (Exception e)
     {
@@ -183,11 +192,42 @@ public class TaskProcessor extends Thread
     }
     finally
     {
-      pool.shutdown();
-      
+      pool.shutdownNow();
+      //When running JUnit, should comment this below line.
+      S3FileUtil.shutdownS3Daemons();
+
       stat.setName("Run Information");
-      monitorTracker.monitor(stat);
+
+      DecimalFormat formatter = new DecimalFormat("#0");
+      StringBuilder sb = new StringBuilder();
+      sb.append("name=" + stat.getName())
+        .append(", type=" + stat.getType())
+        .append(", message=" + stat.getMessage())
+        .append(", environment=" + stat.getEnvironment())
+        .append(", stackId=" + stackId)
+        .append(", groupId=" + stat.getGroupId())       
+        .append(", totalCount=" + stat.getTotalCount())
+        .append(", transferSize=" + stat.getTransferSize() + " bytes")
+        .append(", transferTime=" + stat.getTransferTime() + " ms")
+        .append((stat.getTransferRate() == null ? "" : "transferRate=" + formatter.format(stat.getTransferRate())) + " bytes/ms");
+
+      logger.log(LogType.INFO, sb.toString());
     }
+    
+    try
+    {
+      if (lockFile.exists())
+      {
+        lockFile.delete();
+        logger.log(LogType.INFO, lockFile.getAbsolutePath() + " deleted.");
+      }
+    }
+    catch (Exception e)
+    {
+      logger.log(LogType.ERROR, "lock file " + lockFile.getAbsolutePath() + " deletion failed.");
+      e.printStackTrace();
+    }
+    logger.log(LogType.INFO, "END archiving job  ==============================");
   }
 
   public long getCompletedCount()

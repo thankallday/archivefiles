@@ -3,6 +3,8 @@ package com.thomsonreuters.scholarone.archivefiles.audit;
 import java.util.List;
 import java.util.Map;
 
+import com.scholarone.archivefiles.common.S3File;
+
 public class DocumentAuditInfo
 {
   private Integer stackId;
@@ -194,11 +196,11 @@ public class DocumentAuditInfo
     s.append("archiveYear=" + archiveYear + "\n");
     s.append("archiveMonth=" + archiveMonth + "\n");
     s.append("archiveStatusId=" + archiveStatusId + "\n");
-    s.append("configKeepPDF=" + configKeepPDF + "\n");
-    s.append("documentFilesMap=" + documentFilesMap.toString() + "\n");
-    s.append("preAuditTier2Files=" + preAuditTier2Files.toString() + "\n");
-    s.append("postAuditTier2Files=" + postAuditTier2Files.toString() + "\n");
-    s.append("postAuditTier3Files=" + postAuditTier3Files.toString() + "\n");
+    s.append("configKeepPDF=" + configKeepPDF + "\n\n");
+    s.append("documentFilesMap=" + documentFilesMap.toString() + "\n\n");
+    s.append("preAuditTier2Files=" + preAuditTier2Files.toString() + "\n\n");
+    s.append("postAuditTier2Files=" + postAuditTier2Files.toString() + "\n\n");
+    s.append("postAuditTier3Files=" + postAuditTier3Files.toString() + "\n\n");
 
     return s.toString();
   }

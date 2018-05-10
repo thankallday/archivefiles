@@ -10,16 +10,19 @@ import com.scholarone.activitytracker.IHeader;
 import com.scholarone.activitytracker.ILog;
 import com.scholarone.activitytracker.ref.LogTrackerImpl;
 import com.scholarone.activitytracker.ref.LogType;
+import com.scholarone.archivefiles.common.S3File;
 import com.thomsonreuters.scholarone.archivefiles.FileArchiveConstants;
 
 public class DocumentPostAudit
 {
   private ILog logger = null;
   
-  public DocumentPostAudit(DocumentAuditInfo documentAuditInfo)
+  public DocumentPostAudit(DocumentAuditInfo documentAuditInfo, S3File sourceS3Dir, S3File destinationS3Dir)
   {
     super();
     this.documentAuditInfo = documentAuditInfo;
+    this.sourceS3Dir = sourceS3Dir;
+    this.destinationS3Dir = destinationS3Dir;
     
     logger = new LogTrackerImpl(this.getClass().getName());
     ((IHeader)logger).clearLocalHeaders();
@@ -30,6 +33,10 @@ public class DocumentPostAudit
 
   private DocumentAuditInfo documentAuditInfo;
 
+  private S3File sourceS3Dir;
+
+  private S3File destinationS3Dir;
+
   public boolean performPostAudit()
   {
     logger.log(LogType.INFO, "Post-Audit:  Begin");
@@ -37,10 +44,10 @@ public class DocumentPostAudit
     try
     {
       // Get snapshot of both tier2 and tier3 files systems for this document
-      documentAuditInfo.setPostAuditTier2Files(FileAuditUtility.getFilesAndPathsAsMap(FileAuditUtility
-          .getTier2FilePath(documentAuditInfo)));
-      documentAuditInfo.setPostAuditTier3Files(FileAuditUtility.getFilesAndPathsAsMap(FileAuditUtility
-          .getTier3FilePath(documentAuditInfo)));
+      documentAuditInfo.setPostAuditTier2Files(S3FileAuditUtility.getFilesAndPathsAsMap(S3FileAuditUtility
+          .getTier2FilePath(documentAuditInfo, sourceS3Dir)));
+      documentAuditInfo.setPostAuditTier3Files(S3FileAuditUtility.getFilesAndPathsAsMap(S3FileAuditUtility
+          .getTier3FilePath(documentAuditInfo, destinationS3Dir)));
     }
     catch (IOException e)
     {
@@ -60,7 +67,7 @@ public class DocumentPostAudit
       List<DocumentFileAuditInfo> documentFileAuditInfoList = entry.getValue();
       for (DocumentFileAuditInfo documentFileAuditInfo : documentFileAuditInfoList)
       {
-        if (!FileAuditUtility.shouldFileBeMoved(documentFileAuditInfo.getFileTypeId(), documentFileAuditInfo.isCoverletter()))
+        if (!S3FileAuditUtility.shouldFileBeMoved(documentFileAuditInfo.getFileTypeId(), documentFileAuditInfo.isCoverletter()))
         {
           // files are excluded from moving by name, so if any files with the same name are to be kept, all need to
           // be kept.
@@ -71,9 +78,9 @@ public class DocumentPostAudit
 
       // Time to do the file checks.
       // First, we can ignore the audit if the file wasn't found on tier2 storage
-      if (!FileAuditUtility.didFileExistInTier2PriorToMove(documentAuditInfo, entry.getKey()))
+      if (!S3FileAuditUtility.didFileExistInTier2PriorToMove(documentAuditInfo, entry.getKey()))
       {
-        logger.log(LogType.INFO, "File: " + entry.getKey() + " - Post-Audit:  File not found on pre-move tier2. Ignore audit");
+        logger.log(LogType.INFO, "File: " + entry.getKey() + " - Post-Audit:  File not found on pre-move tier2. Ignore audit 11");
       }
       else
       {
@@ -81,7 +88,7 @@ public class DocumentPostAudit
         if (filesShouldBeMoved)
         {
           // Check to see if they were moved (including removal from tier2)
-          if (FileAuditUtility.didFilesMove(documentAuditInfo, entry.getKey()))
+          if (S3FileAuditUtility.didFilesMove(documentAuditInfo, entry.getKey()))
           {
             logger.log(LogType.INFO, "File: " + entry.getKey()
                 + " - Post-Audit:  File(s) successfully moved to tier3 storage");
@@ -98,7 +105,7 @@ public class DocumentPostAudit
         else
         {
           // Files should have stayed on tier2. Let's make sure that's the case.
-          if (FileAuditUtility.didFilesRemain(documentAuditInfo, entry.getKey()))
+          if (S3FileAuditUtility.didFilesRemain(documentAuditInfo, entry.getKey()))
           {
             logger.log(LogType.INFO, "File: " + entry.getKey()
                 + " - Post-Audit:  File(s) remained in tier2 storage as expected.");
@@ -120,7 +127,7 @@ public class DocumentPostAudit
     List<String> proofFileNameList = new ArrayList<String>();
 
     // high res proof
-    if (FileAuditUtility.didFileExistInTier2PriorToMove(documentAuditInfo, FileArchiveConstants.PDF_PROOF_HI_FILE_NAME))
+    if (S3FileAuditUtility.didFileExistInTier2PriorToMove(documentAuditInfo, FileArchiveConstants.PDF_PROOF_HI_FILE_NAME))
     {
       proofFileNameList.add(FileArchiveConstants.PDF_PROOF_HI_FILE_NAME);
     }
@@ -131,7 +138,7 @@ public class DocumentPostAudit
     }
 
     // first look proof
-    if (FileAuditUtility.didFileExistInTier2PriorToMove(documentAuditInfo,
+    if (S3FileAuditUtility.didFileExistInTier2PriorToMove(documentAuditInfo,
         FileArchiveConstants.PDF_PROOF_FIRST_LOOK_FILE_NAME))
     {
       proofFileNameList.add(FileArchiveConstants.PDF_PROOF_FIRST_LOOK_FILE_NAME);
@@ -139,7 +146,7 @@ public class DocumentPostAudit
     else
     {
       logger.log(LogType.INFO, "File: " + FileArchiveConstants.PDF_PROOF_FIRST_LOOK_FILE_NAME
-          + " - Post-Audit:  File not found on pre-move tier2. Ignore audit");
+          + " - Post-Audit:  File not found on pre-move tier2. Ignore audit...");
     }
 
     // Now loop through list and check to see if they're in the correct place.
@@ -148,7 +155,7 @@ public class DocumentPostAudit
       // proof files should be moved
       if (!documentAuditInfo.isConfigKeepPDF())
       {
-        if (FileAuditUtility.didFilesMove(documentAuditInfo, fileName))
+        if (S3FileAuditUtility.didFilesMove(documentAuditInfo, fileName))
         {
           logger.log(LogType.INFO, "File: " + fileName
               + " - Post-Audit:  File(s) successfully moved to tier3 storage");
@@ -165,7 +172,7 @@ public class DocumentPostAudit
       else
       {
         // Configuration says files should be kept (on tier2)
-        if (FileAuditUtility.didFilesRemain(documentAuditInfo, fileName))
+        if (S3FileAuditUtility.didFilesRemain(documentAuditInfo, fileName))
         {
           logger.log(LogType.INFO, "File: " + fileName
               + " - Post-Audit:  File(s) remained in tier2 storage as expected.");

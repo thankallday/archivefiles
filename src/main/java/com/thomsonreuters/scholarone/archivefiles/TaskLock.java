@@ -11,6 +11,8 @@ import java.util.Date;
 import com.scholarone.activitytracker.ILog;
 import com.scholarone.activitytracker.ref.LogTrackerImpl;
 import com.scholarone.activitytracker.ref.LogType;
+import com.scholarone.archivefiles.common.S3File;
+import com.scholarone.archivefiles.common.S3FileUtil;
 
 public class TaskLock implements ILock
 {
@@ -24,9 +26,12 @@ public class TaskLock implements ILock
 
   private String processId = null;
 
-  public TaskLock(Task task)
+  private String archiveCacheDir;
+
+  public TaskLock(Task task, String archiveCacheDir)
   {
     this.task = task;
+    this.archiveCacheDir = archiveCacheDir;
     processId = Runtime.getRuntime().toString();
 
     if (logger == null)
@@ -44,11 +49,15 @@ public class TaskLock implements ILock
     {   
       if (checkForLock())
       {
-        File lockFile = new File(task.getSource(), LOCK);
+        File dir = new File(archiveCacheDir + File.separator + task.getSourceS3Dir().getKey());
+        if (!dir.exists()) dir.mkdirs();
+        File lockFile = new File(dir, LOCK);
         out = new PrintWriter(lockFile);
         out.println(processId);
         out.println(new Date().getTime());
-        out.close();
+        out.close();  
+        S3FileUtil.putFile(task.getSourceS3Dir().getKey() + LOCK, lockFile, task.getSourceS3Dir().getBucketName());
+        lockFile.delete();
       }
 
       Thread.sleep(500);
@@ -78,8 +87,17 @@ public class TaskLock implements ILock
   {
     if (isLocked)
     {
-      File lockFile = new File(task.getSource(), LOCK);
-      lockFile.delete();
+      try
+      {
+        File lockFile = new File(archiveCacheDir + File.separator + task.getSourceS3Dir().getKey(), LOCK);
+        lockFile.delete();
+        S3File taskLockFile = new S3File(task.getSourceS3Dir().getKey() + LOCK, task.getSourceS3Dir().getBucketName());
+        S3FileUtil.deleteS3AllVersionsRecursive(taskLockFile);
+      }
+      catch(Exception e)
+      {
+        e.printStackTrace();
+      }
     }
   }
 
@@ -90,15 +108,14 @@ public class TaskLock implements ILock
     BufferedReader in = null;
 
     try
-    {
-      File lockFile = new File(task.getSource(), LOCK);
-
-      if (!lockFile.exists())
+    {     
+      if (!S3FileUtil.exists(task.getSourceS3Dir().getKey() + LOCK, task.getSourceS3Dir().getBucketName()))
       {
-        canLock = true;
+          canLock = true;
       }
       else
       {
+        File lockFile = S3FileUtil.getFile(task.getSourceS3Dir().getKey() + LOCK, task.getSourceS3Dir().getBucketName());
         in = new BufferedReader(new FileReader(lockFile));
 
         Date date = null;

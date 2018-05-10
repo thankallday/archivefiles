@@ -7,17 +7,20 @@ import java.util.List;
 import java.util.UUID;
 
 import org.junit.Assert;
+import org.junit.FixMethodOrder;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.junit.runners.MethodSorters;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("classpath:applicationContextTest.xml")
 public class TaskProcessorTest
 {  
-  @Test
-  public void testProcess()
+  @Test //First, check if lock/.lock file doex not exist.
+  public void testAProcess()
   {
     long count = 1000;
     
@@ -50,7 +53,7 @@ public class TaskProcessorTest
   }
   
   @Test
-  public void testProcessStop()
+  public void testBProcessStop()
   {
     long count = 10000;
     
@@ -81,7 +84,6 @@ public class TaskProcessorTest
       fail(ie.getMessage());
     }
     
-    System.out.println("Completed: " + p.getCompletedCount());
     Assert.assertTrue(count > p.getCompletedCount());
   }
 }

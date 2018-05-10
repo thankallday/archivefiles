@@ -9,17 +9,22 @@ import com.scholarone.activitytracker.IHeader;
 import com.scholarone.activitytracker.ILog;
 import com.scholarone.activitytracker.ref.LogTrackerImpl;
 import com.scholarone.activitytracker.ref.LogType;
+import com.scholarone.archivefiles.common.S3File;
 
 public class DocumentRevertAudit
 {
   private ILog logger = null;
 
   private DocumentAuditInfo documentAuditInfo;
+  private S3File sourceS3Dir;
+  private S3File destinationS3Dir;
 
-  public DocumentRevertAudit(DocumentAuditInfo documentAuditInfo)
+  public DocumentRevertAudit(DocumentAuditInfo documentAuditInfo, S3File sourceS3Dir, S3File destinationS3Dir)
   {
     super();
     this.documentAuditInfo = documentAuditInfo;
+    this.sourceS3Dir = sourceS3Dir;
+    this.destinationS3Dir = destinationS3Dir;
 
     logger = new LogTrackerImpl(this.getClass().getName());
     ((IHeader)logger).clearLocalHeaders();
@@ -35,10 +40,10 @@ public class DocumentRevertAudit
     try
     {
       //get snapshots of the tier2 and tier3 file systems
-      documentAuditInfo.setPostAuditTier2Files(FileAuditUtility.getFilesAndPathsAsMap(FileAuditUtility
-          .getTier2FilePath(documentAuditInfo)));
-      documentAuditInfo.setPostAuditTier3Files(FileAuditUtility.getFilesAndPathsAsMap(FileAuditUtility
-          .getTier3FilePath(documentAuditInfo)));
+      documentAuditInfo.setPostAuditTier2Files(S3FileAuditUtility.getFilesAndPathsAsMap(S3FileAuditUtility
+          .getTier2FilePath(documentAuditInfo, sourceS3Dir)));
+      documentAuditInfo.setPostAuditTier3Files(S3FileAuditUtility.getFilesAndPathsAsMap(S3FileAuditUtility
+          .getTier3FilePath(documentAuditInfo, destinationS3Dir)));
     }
     catch (IOException e)
     {

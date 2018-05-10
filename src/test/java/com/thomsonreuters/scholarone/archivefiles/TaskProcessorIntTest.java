@@ -12,25 +12,76 @@ import org.apache.commons.io.FileUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.FixMethodOrder;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.junit.runners.MethodSorters;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
+import com.scholarone.archivefiles.common.FileUtility;
+import com.scholarone.archivefiles.common.S3File;
+import com.scholarone.archivefiles.common.S3FileUtil;
+import com.scholarone.monitoring.common.Environment;
+
 @RunWith(SpringJUnit4ClassRunner.class)
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 @ContextConfiguration("classpath:applicationContextTest.xml")
 public class TaskProcessorIntTest
 {  
   String source = "/shared/gus/docfiles/dev4/fse/2015/12/282294";
+  
+  final String archiveCacheDir = ConfigPropertyValues.getProperty("archive.cache.dir");
+  
+  final File sourceDir = new File (archiveCacheDir + File.separator + "docfiles/dev4/fse/2015/12/282294");
 
-  String destination = "/shared/gus_archive/docfiles/2015/12/dev4/fse/282294";
+  final String sourceBucket = ConfigPropertyValues.getProperty("source.bucket.name");
+
+  final String destinationBucket = ConfigPropertyValues.getProperty("destination.bucket.name");
+
+  final S3File sourceS3Dir = new S3File("docfiles/dev4/fse/2015/12/282294/", sourceBucket);
+
+  final S3File destinationS3Dir = new S3File("docfiles/2016/03/dev4/fse/282294/", destinationBucket);
+  
+  final Environment envType = Environment.getEnvironmentType("DEV");
 
   @Before
   public void setup() throws IOException
   {
+    if (sourceDir.exists())
+      FileUtils.deleteDirectory(sourceDir);
+    
+    int exitCode;
+    
+    if (S3FileUtil.isDirectory(sourceS3Dir))
+    {
+      exitCode = S3FileUtil.deleteS3AllVersionsRecursive(sourceS3Dir);
+      Assert.assertTrue(exitCode != 0);
+    }
+    
+    if (S3FileUtil.isDirectory(destinationS3Dir))
+    {
+      exitCode = S3FileUtil.deleteS3AllVersionsRecursive(destinationS3Dir);
+      Assert.assertTrue(exitCode != 0);
+    }
+    
+    
+    File tempDir = new File(archiveCacheDir);
+    if (!tempDir.exists())
+      tempDir.mkdirs();
+    
+    ArrayList<File> lists = new ArrayList<File>();
     File zipFile = new File("FSETest.zip");
     UnZip unzip = new UnZip();
-    unzip.extract(zipFile.getPath(), source);
+    unzip.extract(zipFile.getPath(), sourceDir.getPath());
+
+    FileUtility.listDir(sourceDir, lists);
+    for(File f : lists)
+    {
+      if(f.isDirectory())
+        continue;
+      S3FileUtil.putFile(S3FileUtil.trimKey(f.getPath()), f, sourceS3Dir.getBucketName());
+    }
     
     ArchiveFilesDAOTestImpl db = new ArchiveFilesDAOTestImpl();
     db.openConnection(4);
@@ -48,31 +99,36 @@ public class TaskProcessorIntTest
     db.openConnection(4);    
     db.deleteDocument();
     db.closeConnection();
+
+    File lockFile = new File(sourceDir.getPath() + File.separator + "tier3move.lock");
+    if (lockFile.exists())
+      lockFile.delete();
     
-    File sourceFile = new File(source);
-    File destFile = new File(destination);
+    if (S3FileUtil.isDirectory(sourceS3Dir))
+      S3FileUtil.deleteS3AllVersionsRecursive(sourceS3Dir);
     
-    FileUtils.deleteDirectory(sourceFile);    
-    FileUtils.deleteDirectory(destFile);
+    if (S3FileUtil.isDirectory(destinationS3Dir))
+      S3FileUtil.deleteS3AllVersionsRecursive(destinationS3Dir);
   }
   
+  //CAUTION: Should comment S3FileUtil.shutdownS3Daemons(); in TaskProcessor.java. If not, http reaper deamon is killed. So more Assert is impossible.
   @Test
-  public void testProcess() throws IOException
+  public void testAProcess() throws IOException
   {
     List<ITask> tasks = new ArrayList<ITask>();
 
     Integer stackId = Integer.valueOf(4);
     Config config = new Config();
-    config.setConfigId(963);
+    config.setConfigId(589);
     config.setShortName("fse");
     Document document = new Document();
     document.setDocumentId(282294);
     document.setFileStoreMonth(12);
     document.setFileStoreYear(2015);
-    document.setArchiveMonth(12);
-    document.setArchiveYear(2015);
+    document.setArchiveMonth(03);
+    document.setArchiveYear(2016);
     document.setRetryCount(0);
-    
+
     DocumentFile file1 = new DocumentFile();
     file1.setName("282294_File000000_4675773.doc");
     file1.setType(1);
@@ -90,7 +146,7 @@ public class TaskProcessorIntTest
     document.setFiles(files);
     
     Long runId = UUID.randomUUID().getLeastSignificantBits();
-    ITask task = new Task(stackId, config, document, runId, ITask.NO_AUDIT);
+    ITask task = new Task(stackId, config, document, runId, ITask.NO_AUDIT, "dev", archiveCacheDir, sourceBucket, destinationBucket, "docfiles", envType, "dev");
     tasks.add(task);
     
     TaskProcessor p = new TaskProcessor(stackId, runId, new TaskFactoryImpl(stackId, runId));
@@ -111,18 +167,25 @@ public class TaskProcessorIntTest
     
     Assert.assertTrue(1 == p.getCompletedCount());
     
-    File test1 = new File(source + "/docfiles/original-files/", "282294_File000000_4675773.doc");
-    Assert.assertFalse(test1.exists());
+    boolean result;
     
-    File test2 = new File(source + "/docfiles/original-files/", "282294_File000004_4675785.jpg");
-    Assert.assertTrue(test2.exists());
+    //test if excluded files are remained.
+    S3File test1 = new S3File(sourceS3Dir.getKey() + "docfiles/original-files/282294_File000000_4675773.doc", sourceS3Dir.getBucketName());
+    result = S3FileUtil.exists(test1);
+    Assert.assertFalse(result);
     
-    File test3 = new File(source + "/docfiles/original-files/", "282294_File000002_4675779.xlsx");
-    Assert.assertTrue(test3.exists());
+    S3File test2 = new S3File(sourceS3Dir.getKey() + "docfiles/original-files/282294_File000004_4675785.jpg", sourceS3Dir.getBucketName());
+    result = S3FileUtil.exists(test2);
+    Assert.assertTrue(result);
+    
+    S3File test3 = new S3File(sourceS3Dir.getKey() + "docfiles/original-files/282294_File000002_4675779.xlsx", sourceS3Dir.getBucketName());
+    result = S3FileUtil.exists(test3);
+    Assert.assertTrue(result);
+
   }
   
   @Test
-  public void testRevertProcess() throws IOException
+  public void testBRevertProcess() throws IOException
   {    
     List<ITask> tasks = new ArrayList<ITask>();
 
@@ -137,7 +200,7 @@ public class TaskProcessorIntTest
     document.setArchiveMonth(12);
     document.setArchiveYear(2015);
     
-    ITask task = new RevertTask(stackId, config, document);
+    ITask task = new RevertTask(stackId, config, document, sourceS3Dir, destinationS3Dir);
     tasks.add(task);
     
     Long runId = UUID.randomUUID().getLeastSignificantBits();

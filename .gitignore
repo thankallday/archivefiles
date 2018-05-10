@@ -1,3 +1,8 @@
 /target/
 audit.log*
-output.log*
+.classpath
+/.project
+/.settings
+*.class
+/log/
+/lock/
